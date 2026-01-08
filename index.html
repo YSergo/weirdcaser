@@ -53,6 +53,12 @@
       opacity: 1;
       font-size: 30px;
     }
+
+    #run.is-hover {
+      opacity: 0.75;
+    }
+
+
     #stop {
       position: fixed;
       left: 50%;
@@ -87,11 +93,21 @@
     let isStopped = false;
     let stopTimerStarted = false;
 
+    let impactHoverTimer = null;
+
+    function triggerImpactHover(ms = 180) {
+      button.classList.add('is-hover');
+      clearTimeout(impactHoverTimer);
+      impactHoverTimer = setTimeout(() => {
+        button.classList.remove('is-hover');
+      }, ms);
+    }
+
     // "Flee" physics
     const cfg = {
       fleeRadius: 220,     // px: when cursor gets closer than this, button runs away
       accel: 6,          // acceleration multiplier
-      friction:1,      // 0..1: lower = more damping
+      friction: 1,      // 0..1: lower = more damping
       maxSpeed: 14,        // px per frame
       bounce: 0.7        // 0..1: energy kept on wall bounce
     };
@@ -168,21 +184,29 @@
       const maxX = window.innerWidth - rect.width;
       const maxY = window.innerHeight - rect.height;
 
+      let bounced = false;
+
       if (posX < 0) {
         posX = 0;
         velX = -velX * cfg.bounce;
+        bounced = true;
       } else if (posX > maxX) {
         posX = maxX;
         velX = -velX * cfg.bounce;
+        bounced = true;
       }
 
       if (posY < 0) {
         posY = 0;
         velY = -velY * cfg.bounce;
+        bounced = true;
       } else if (posY > maxY) {
         posY = maxY;
         velY = -velY * cfg.bounce;
+        bounced = true;
       }
+
+      if (bounced) triggerImpactHover();
 
       // Friction (damping)
       velX *= cfg.friction;
