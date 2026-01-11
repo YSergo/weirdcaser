@@ -49,6 +49,17 @@
       user-select: none;
     }
 
+    #backdrop {
+      position: fixed;
+      inset: 0;
+      backdrop-filter: blur(15px);
+      -webkit-backdrop-filter: blur(15px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      z-index: 0;
+    }
+
     #run:hover {
       opacity: 1;
       font-size: 30px;
@@ -59,25 +70,116 @@
     }
 
 
-    #stop {
+    #controls {
       position: fixed;
       left: 50%;
       top: 50%;
       transform: translate(-50%, -50%);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+      z-index: 2;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+    }
+
+    #stop,
+    #refresh,
+    #gear {
       font-family: jetbrains mono, monospace;
       font-size: 14px;
       color: #bdbdbd;
       background: none;
       border: none;
       cursor: pointer;
-      z-index: 0;
+      padding: 0;
+      line-height: 1;
+    }
+
+    #gear {
+      font-size: 24px;
+      transform: translateY(-1px);
+    }
+
+    #refresh {
+      font-size: 30px;
+      transform: translateY(-1px);
+    }
+
+    #stop:hover,
+    #refresh:hover,
+    #gear:hover {
+      color: white;
+    }
+
+    #settings {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      font-family: jetbrains mono, monospace;
+      color: #bdbdbd;
+      z-index: 2;
+
+      width: min(520px, calc(100vw - 48px));
       opacity: 0;
       pointer-events: none;
       transition: opacity 0.2s;
     }
 
-    #stop:hover {
-      opacity: 1;
+    #settings .row {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 8px;
+      margin: 14px 0;
+    }
+
+    #settings label {
+      font-size: 14px;
+      user-select: none;
+    }
+
+    #settings input[type="range"] {
+      width: 100%;
+      accent-color: #bdbdbd;
+      cursor: pointer;
+    }
+
+    #settingsExit {
+      margin-top: 10px;
+      font-family: jetbrains mono, monospace;
+      font-size: 14px;
+      color: #bdbdbd;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    #settingsExit:hover {
+      color: white;
+    }
+
+    .settings-actions {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 14px;
+    }
+
+    #settingsRandom {
+      font-family: jetbrains mono, monospace;
+      font-size: 14px;
+      color: #bdbdbd;
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0;
+    }
+
+    #settingsRandom:hover {
       color: white;
     }
   </style>
@@ -85,13 +187,77 @@
 
 <body>
   <button id="run">Run</button>
-  <button id="stop">stop</button>
+  <div id="backdrop" aria-hidden="true"></div>
+
+  <div id="controls">
+    <button id="stop">stop</button>
+    <button id="refresh" aria-label="reset" style="display:none">⟳</button>
+    <button id="gear" aria-label="settings">⚙︎</button>
+  </div>
+
+  <div id="settings" aria-hidden="true">
+    <div class="row">
+      <label for="accelRange">accel: <span id="accelVal"></span></label>
+      <input id="accelRange" type="range" min="1" max="30" step="0.5" />
+    </div>
+
+    <div class="row">
+      <label for="frictionRange">friction: <span id="frictionVal"></span></label>
+      <input id="frictionRange" type="range" min="0" max="10" step="1" />
+    </div>
+
+    <div class="row">
+      <label for="maxSpeedRange">maxSpeed: <span id="maxSpeedVal"></span></label>
+      <input id="maxSpeedRange" type="range" min="1" max="70" step="1" />
+    </div>
+
+    <div class="row">
+      <label for="bounceRange">bounce: <span id="bounceVal"></span></label>
+      <input id="bounceRange" type="range" min="0" max="1" step="0.05" />
+    </div>
+
+    <div class="settings-actions">
+      <button id="settingsRandom">random</button>
+      <button id="settingsExit">exit</button>
+    </div>
+  </div>
 
   <script>
     const button = document.getElementById('run');
     const stopButton = document.getElementById('stop');
+    const refreshButton = document.getElementById('refresh');
+
+    const controls = document.getElementById('controls');
+    const gearButton = document.getElementById('gear');
+    const settingsPanel = document.getElementById('settings');
+    const backdrop = document.getElementById('backdrop');
+    const settingsExit = document.getElementById('settingsExit');
+    const settingsRandom = document.getElementById('settingsRandom');
+
+    const accelRange = document.getElementById('accelRange');
+    const frictionRange = document.getElementById('frictionRange');
+    const maxSpeedRange = document.getElementById('maxSpeedRange');
+    const bounceRange = document.getElementById('bounceRange');
+
+    const accelVal = document.getElementById('accelVal');
+    const frictionVal = document.getElementById('frictionVal');
+    const maxSpeedVal = document.getElementById('maxSpeedVal');
+    const bounceVal = document.getElementById('bounceVal');
+
     let isStopped = false;
     let stopTimerStarted = false;
+    let stopRevealTimer = null;
+    let inSettings = false;
+
+    const defaultCfg = {
+      fleeRadius: 220,     // px: when cursor gets closer than this, button runs away
+      accel: 6,            // acceleration multiplier
+      friction: 1,         // 0..1: lower = more damping
+      maxSpeed: 14,        // px per frame
+      bounce: 0.7          // 0..1: energy kept on wall bounce
+    };
+
+    const cfg = { ...defaultCfg };
 
     let impactHoverTimer = null;
 
@@ -104,13 +270,6 @@
     }
 
     // "Flee" physics
-    const cfg = {
-      fleeRadius: 220,     // px: when cursor gets closer than this, button runs away
-      accel: 6,          // acceleration multiplier
-      friction: 1,      // 0..1: lower = more damping
-      maxSpeed: 14,        // px per frame
-      bounce: 0.7        // 0..1: energy kept on wall bounce
-    };
 
     let mouseX = window.innerWidth / 2;
     let mouseY = window.innerHeight / 2;
@@ -125,6 +284,17 @@
       return Math.max(min, Math.min(max, v));
     }
 
+    function frictionFromUI(u) {
+      // 0 = no friction, 10 = max friction
+      const t = clamp(u / 10, 0, 1);
+      return 1.0 - t * 0.06; // 1.00 .. 0.94
+    }
+
+    function frictionUIFromInternal(f) {
+      const u = ((1.0 - f) / 0.06) * 10;
+      return Math.round(clamp(u, 0, 10));
+    }
+
     function resetToCenter() {
       const rect = button.getBoundingClientRect();
       posX = (window.innerWidth - rect.width) / 2;
@@ -136,13 +306,131 @@
 
     resetToCenter();
 
+    function showControls() {
+      controls.style.opacity = '0.6';
+      controls.style.pointerEvents = 'auto';
+    }
+
+    function hideControls() {
+      controls.style.opacity = '0';
+      controls.style.pointerEvents = 'none';
+    }
+
+    function showBackdrop() {
+      backdrop.style.opacity = '1';
+      backdrop.setAttribute('aria-hidden', 'false');
+    }
+
+    function hideBackdrop() {
+      backdrop.style.opacity = '0';
+      backdrop.setAttribute('aria-hidden', 'true');
+    }
+
+    function showStopGear() {
+      stopButton.style.display = '';
+      gearButton.style.display = '';
+      refreshButton.style.display = 'none';
+    }
+
+    function showRefreshOnly() {
+      stopButton.style.display = 'none';
+      gearButton.style.display = 'none';
+      refreshButton.style.display = '';
+    }
+
+    function showSettings() {
+      inSettings = true;
+      isStopped = true;
+      velX = 0;
+      velY = 0;
+
+      hideControls();
+      showBackdrop();
+      showStopGear();
+      settingsPanel.style.opacity = '1';
+      settingsPanel.style.pointerEvents = 'auto';
+      settingsPanel.setAttribute('aria-hidden', 'false');
+    }
+
+    function hideSettings() {
+      hideBackdrop();
+      inSettings = false;
+      settingsPanel.style.opacity = '0';
+      settingsPanel.style.pointerEvents = 'none';
+      settingsPanel.setAttribute('aria-hidden', 'true');
+    }
+
+    function frictionFromUI(u) {
+      // u: 0..10 (user-facing)
+      // 0  -> no friction
+      // 10 -> strong friction
+      const t = clamp(u / 10, 0, 1);
+      // Inverted mapping: higher u => more damping
+      return 1.0 - t * 0.06; // 1.00 .. 0.94
+    }
+
+    function frictionUIFromInternal(f) {
+      const u = ((1.0 - f) / 0.06) * 10;
+      return Math.round(clamp(u, 0, 10));
+    }
+
+    function syncSettingsUI() {
+      accelRange.value = String(cfg.accel);
+      const frictionUI = frictionUIFromInternal(cfg.friction);
+      frictionRange.value = String(frictionUI);
+      maxSpeedRange.value = String(cfg.maxSpeed);
+      bounceRange.value = String(cfg.bounce);
+
+      accelVal.textContent = cfg.accel;
+      frictionVal.textContent = frictionUI;
+      maxSpeedVal.textContent = cfg.maxSpeed;
+      bounceVal.textContent = Number(cfg.bounce).toFixed(2);
+    }
+
+    function resetToInitial() {
+      // clear timers
+      if (stopRevealTimer) {
+        clearTimeout(stopRevealTimer);
+        stopRevealTimer = null;
+      }
+      stopTimerStarted = false;
+
+      // reset UI
+      hideSettings();
+      hideBackdrop();
+      hideControls();
+      showStopGear();
+
+      // reset physics
+      isStopped = false;
+      Object.assign(cfg, defaultCfg);
+      syncSettingsUI();
+      resetToCenter();
+      lastFrameTime = null;
+    }
+
+    syncSettingsUI();
+    hideControls();
+    hideSettings();
+    hideBackdrop();
+    showStopGear();
+
     document.addEventListener('mousemove', (e) => {
       mouseX = e.clientX;
       mouseY = e.clientY;
     });
 
-    function tick() {
-      if (isStopped) {
+    let lastFrameTime = null;
+
+    function tick(now) {
+      if (lastFrameTime === null) lastFrameTime = now;
+      const dtMs = now - lastFrameTime;
+      lastFrameTime = now;
+
+      // Normalize to ~60fps steps (16.67ms). Clamp to avoid huge jumps on tab-switch.
+      const dt = clamp(dtMs / 16.67, 0, 3);
+
+      if (isStopped || inSettings) {
         button.style.transform = `translate3d(${posX}px, ${posY}px, 0)`;
         requestAnimationFrame(tick);
         return;
@@ -158,9 +446,8 @@
       if (dist > 0 && dist < cfg.fleeRadius) {
         if (!stopTimerStarted) {
           stopTimerStarted = true;
-          setTimeout(() => {
-            stopButton.style.opacity = '0.6';
-            stopButton.style.pointerEvents = 'auto';
+          stopRevealTimer = setTimeout(() => {
+            showControls();
           }, 1000);
         }
         // Run away from the cursor, stronger when closer
@@ -168,8 +455,8 @@
         const nx = dx / dist;
         const ny = dy / dist;
 
-        velX += (-nx) * cfg.accel * (t * t) * 18;
-        velY += (-ny) * cfg.accel * (t * t) * 18;
+        velX += (-nx) * cfg.accel * (t * t) * 18 * dt;
+        velY += (-ny) * cfg.accel * (t * t) * 18 * dt;
       }
 
       // Clamp speed
@@ -177,8 +464,8 @@
       velY = clamp(velY, -cfg.maxSpeed, cfg.maxSpeed);
 
       // Integrate
-      posX += velX;
-      posY += velY;
+      posX += velX * dt;
+      posY += velY * dt;
 
       // Walls (viewport bounce)
       const maxX = window.innerWidth - rect.width;
@@ -209,8 +496,9 @@
       if (bounced) triggerImpactHover();
 
       // Friction (damping)
-      velX *= cfg.friction;
-      velY *= cfg.friction;
+      const damping = Math.pow(cfg.friction, dt);
+      velX *= damping;
+      velY *= damping;
 
       button.style.transform = `translate3d(${posX}px, ${posY}px, 0)`;
       requestAnimationFrame(tick);
@@ -218,19 +506,65 @@
 
     requestAnimationFrame(tick);
 
-    window.addEventListener('resize', resetToCenter);
+    window.addEventListener('resize', () => {
+      // Keep the "initial" layout invariant on resize
+      if (!stopTimerStarted && !inSettings) resetToCenter();
+    });
 
     stopButton.addEventListener('click', () => {
       isStopped = true;
+      inSettings = false;
       velX = 0;
       velY = 0;
 
-      // Hide "stop" after use
-      stopButton.style.opacity = '0';
-      stopButton.style.pointerEvents = 'none';
+      // Replace STOP with a RESET icon in the same place
+      showRefreshOnly();
+      showControls();
     });
 
+    refreshButton.addEventListener('click', () => {
+      resetToInitial();
+    });
+
+    gearButton.addEventListener('click', () => {
+      showSettings();
+    });
+
+    function randomizeSettings() {
+      cfg.accel = Number((Math.random() * (30 - 1) + 1).toFixed(1));
+      cfg.friction = frictionFromUI(Math.floor(Math.random() * 11));
+      cfg.maxSpeed = Math.floor(Math.random() * (70 - 1 + 1)) + 1;
+      cfg.bounce = Number((Math.random()).toFixed(2));
+      syncSettingsUI();
+    }
+
+    settingsRandom.addEventListener('click', () => {
+      randomizeSettings();
+    });
+
+    settingsExit.addEventListener('click', () => {
+      hideSettings();
+      isStopped = false;
+      showStopGear();
+      showControls();
+    });
+
+    function bindRange(rangeEl, onValue) {
+      rangeEl.addEventListener('input', () => {
+        onValue(rangeEl.value);
+        syncSettingsUI();
+      });
+    }
+
+    bindRange(accelRange, (v) => { cfg.accel = Number(v); });
+    bindRange(frictionRange, (v) => {
+      cfg.friction = frictionFromUI(Number(v));
+    });
+    bindRange(maxSpeedRange, (v) => { cfg.maxSpeed = Number(v); });
+    bindRange(bounceRange, (v) => { cfg.bounce = Number(v); });
+
     button.addEventListener('click', () => {
+      if (inSettings) return;
       let str = prompt('enter text');
       if (str === null) return;
 
